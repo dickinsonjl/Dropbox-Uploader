@@ -39,6 +39,8 @@ SHOW_PROGRESSBAR=0
 SKIP_EXISTING_FILES=0
 ERROR_STATUS=0
 
+MIN_FREEMB=150
+
 #Don't edit these...
 API_LONGPOLL_FOLDER="https://notify.dropboxapi.com/2/files/list_folder/longpoll"
 API_CHUNKED_UPLOAD_START_URL="https://content.dropboxapi.com/2/files/upload_session/start"
@@ -182,7 +184,7 @@ fi
 function print
 {
     if [[ $QUIET == 0 ]]; then
-	    echo -ne "$1";
+        echo -ne "$1";
     fi
 }
 
@@ -206,17 +208,17 @@ function remove_temp_files
 function convert_bytes
 {
     if [[ $HUMAN_READABLE_SIZE == 1 && "$1" != "" ]]; then
-	    if (($1 > 1073741824));then
-	        echo $(($1/1073741824)).$(($1%1073741824/100000000))"G";
-	    elif (($1 > 1048576));then
-	        echo $(($1/1048576)).$(($1%1048576/100000))"M";
-	    elif (($1 > 1024));then
-	        echo $(($1/1024)).$(($1%1024/100))"K";
-	    else
-	        echo $1;
-	    fi
+        if (($1 > 1073741824));then
+            echo $(($1/1073741824)).$(($1%1073741824/100000000))"G";
+        elif (($1 > 1048576));then
+            echo $(($1/1048576)).$(($1%1048576/100000))"M";
+        elif (($1 > 1024));then
+            echo $(($1/1024)).$(($1%1024/100))"K";
+        else
+            echo $1;
+        fi
     else
-	    echo $1;
+        echo $1;
     fi
 }
 
@@ -913,7 +915,7 @@ function db_account_space
         let used_mb=$used/1024/1024
         echo -e "Used:\t$used_mb Mb"
 
-		let free_mb=$((quota-used))/1024/1024
+        let free_mb=$((quota-used))/1024/1024
         echo -e "Free:\t$free_mb Mb"
 
         echo ""
@@ -1104,6 +1106,7 @@ function db_list_outfile
 function db_list
 {
     local DIR_DST=$(normalize_path "$1")
+    local FIRST_DIR_FLAG=0
 
     print " > Listing \"$DIR_DST\"... "
 
@@ -1134,6 +1137,7 @@ function db_list
     done < "$OUT_FILE"
 
     #For each entry, printing directories...
+    local DIRNUM=0
     while read -r line; do
 
         local FILE=${line%:*}
@@ -1145,6 +1149,12 @@ function db_list
         FILE=${FILE##*/}
 
         if [[ $TYPE == "folder" ]]; then
+            if [[ $FIRST_DIR_FLAG == 0 ]]; then
+                FIRST_DIR_NAME="$FILE"
+                FIRST_DIR_FLAG=1
+            fi
+            DIRSARRAY[$DIRNUM]=$FILE
+            ((DIRNUM++))
             FILE=$(echo -e "$FILE")
             $PRINTF " [D] %-${padding}s %s\n" "$SIZE" "$FILE"
         fi
@@ -1446,6 +1456,26 @@ function db_sha_local
     echo $SHA_CONCAT | sed 's/\([0-9A-F]\{2\}\)/\\\\\\x\1/gI' | xargs printf | shasum -a 256 | awk '{print $1}'
 }
 
+#clean space by removing directories until minspace is free
+function db_clean
+{
+    db_account_space
+        if ([ "$MIN_FREEMB" -gt "$free_mb" ]); then
+                db_list
+                local DIRNUM=0
+            while ([ "$MIN_FREEMB" -gt "$free_mb" ]); do
+                #delete a folder
+                FIRST_DIR_NAME=${DIRSARRAY[$DIRNUM]}
+                echo "Delete folder name: $FIRST_DIR_NAME"
+                echo "MIN_FREEMB=$MIN_FREEMB"
+                db_delete "/$FIRST_DIR_NAME"
+                db_account_space
+                ((DIRNUM++))
+            done
+        fi
+
+}
+
 ################
 #### SETUP  ####
 ################
@@ -1580,6 +1610,12 @@ case $COMMAND in
     space)
 
         db_account_space
+
+    ;;
+
+    clean)
+
+        db_clean
 
     ;;
 
